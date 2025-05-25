@@ -1,0 +1,129 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+
+#define BOTAO_LIGA (1 << PD4)
+#define BOTAO_DESLIGA (1 << PD5)
+#define LED_50 (1 << PB0)
+#define LED_100 (1 << PB1)
+#define MOTOR (1 << PD6)  // PWM no OC0A
+
+volatile uint8_t velocidade = 0;
+volatile uint8_t sistema_ligado = 0;
+volatile uint8_t atingiu_50 = 0;
+
+void UART_Init(unsigned int ubrr) {
+    // Configuração da UART (mantida igual)
+}
+
+void PWM_Init() {
+    // Configura PD6 como saída (OC0A)
+    DDRD |= MOTOR;
+    
+    // Modo Fast PWM, TOP = 0xFF, Clear OC0A on compare match
+    TCCR0A = (1 << COM0A1) | (1 << WGM01) | (1 << WGM00);
+    
+    // Prescaler desligado inicialmente
+    TCCR0B = 0;
+    
+    // Valor inicial do PWM (0% - motor desligado)
+    OCR0A = 0;
+}
+
+// Inicialização do Timer1 para contagem de tempo
+void Timer1_Init() {
+    // Modo CTC (Clear Timer on Compare Match)
+    TCCR1B = (1 << WGM12);
+    
+    // Valor para comparar (1 segundo com prescaler 1024)
+    OCR1A = 15624; // 16MHz / 1024 / 1Hz - 1
+    
+    // Habilitar interrupção por comparação
+    TIMSK1 = (1 << OCIE1A);
+    
+    // Prescaler desligado inicialmente
+    TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
+}
+
+void Interrupt_Init() {
+    // Configurar botões como entrada com pull-up
+    DDRD &= ~(BOTAO_LIGA | BOTAO_DESLIGA);
+    PORTD |= (BOTAO_LIGA | BOTAO_DESLIGA);
+    
+    // Habilitar interrupção por mudança de estado nos botões
+    PCICR = (1 << PCIE2);
+    PCMSK2 = (1 << PCINT20) | (1 << PCINT21); // PD4 e PD5
+    
+    // Habilitar interrupções globais
+    sei();
+}
+
+ISR(PCINT2_vect) {
+  
+    if (!(PIND & BOTAO_LIGA) && !sistema_ligado) {
+        sistema_ligado = 1;
+        velocidade = 0;
+        atingiu_50 = 0;
+        
+        
+        PORTB &= ~(LED_50 | LED_100);
+        DDRB |= (LED_50 | LED_100);
+        
+        
+        TCCR0B = (1 << CS02) | (1 << CS00);
+        
+        
+        TCCR1B |= (1 << CS12) | (1 << CS10);
+    }
+    
+    
+    if (!(PIND & BOTAO_DESLIGA) && sistema_ligado) {
+        sistema_ligado = 0;
+        
+        
+        OCR0A = 0;
+        PORTB &= ~(LED_50 | LED_100);
+        
+        
+        TCCR0B = 0; // Desligar prescaler do Timer0
+        TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); // Desligar prescaler do Timer1
+    }
+}
+
+ISR(TIMER1_COMPA_vect) {
+    if (sistema_ligado && velocidade < 100) {
+        velocidade += 10; // Aumenta 10% a cada segundo (10s para chegar a 100%)
+        OCR0A = (255 * velocidade) / 100; // Converter porcentagem para valor PWM
+        
+      
+        if (velocidade >= 50 && !atingiu_50) {
+            PORTB |= LED_50;
+            PORTB &= ~LED_100;
+            atingiu_50 = 1;
+        }
+        
+        
+        if (velocidade == 100) {
+            PORTB &= ~LED_50;
+            PORTB |= LED_100;
+            
+            
+            TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
+        }
+    }
+}
+
+int main(void) {
+    
+    PWM_Init();
+    Timer1_Init();
+    Interrupt_Init();
+    
+    
+    while (1) {
+        // O trabalho principal é feito pelas interrupções
+        _delay_ms(100);
+    }
+    
+    return 0;
+}

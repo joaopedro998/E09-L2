@@ -1,0 +1,127 @@
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include <util/delay.h>
+
+#define BOTAO_LEITURA (1 << PD4)  // Botão LEITURA no PD4
+#define LED (1 << PB0)            // LED no PB0
+#define FIRST_READ 1              // Flag para primeira leitura
+
+
+volatile uint16_t leitura_anterior = 0;
+volatile uint16_t leitura_atual = 0;
+volatile uint8_t contador = 0;
+volatile uint8_t primeira_leitura = FIRST_READ;
+volatile uint8_t led_status = 0;
+volatile uint8_t piscar_led = 0;
+
+void ADC_Init(void);
+uint16_t ADC_Read(uint8_t channel);
+void Timer1_Init(void);
+void INT_Init(void);
+
+int main(void) {
+   
+    DDRB |= LED;                
+    ADC_Init();                 
+    Timer1_Init();             
+    INT_Init();                 
+    
+    sei();                      
+    
+    UART_Init(MYUBRR);          
+    UART_Transmit("Sistema ADC pronto\n");
+    
+    while(1) {
+        
+    }
+}
+
+
+void ADC_Init(void) {
+    ADMUX = (1 << REFS0);      // Tensão de referência AVcc
+    ADCSRA = (1 << ADEN) |     // Habilita ADC
+             (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0); // Prescaler 128
+}
+
+
+uint16_t ADC_Read(uint8_t channel) {
+    channel &= 0x07;            // Limita canal a 0-7
+    ADMUX = (ADMUX & 0xF8) | channel; // Seleciona canal
+    
+    ADCSRA |= (1 << ADSC);      // Inicia conversão
+    while (ADCSRA & (1 << ADSC)); // Aguarda fim da conversão
+    
+    return ADC;                 // Retorna valor lido
+}
+
+
+void Timer1_Init(void) {
+    
+    TCCR1B |= (1 << WGM12);
+    
+   
+    OCR1A = 3906;
+    
+  
+    TIMSK1 |= (1 << OCIE1A);
+    
+  
+    TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10));
+}
+
+
+void INT_Init(void) {
+    EICRA |= (1 << ISC01);     // Configura INT0 para borda de descida
+    EIMSK |= (1 << INT0);      // Habilita INT0
+    
+    DDRD &= ~(BOTAO_LEITURA);  // Configura PD4 como entrada
+    PORTD |= BOTAO_LEITURA;    // Ativa pull-up
+}
+
+
+ISR(INT0_vect) {
+    leitura_atual = ADC_Read(0); // Lê canal ADC0
+    
+    if(!primeira_leitura) {
+        // Verifica se a leitura atual é 20% menor que a anterior
+        if(leitura_atual <= (leitura_anterior * 0.8)) {
+            contador++;
+            
+            
+            if(contador >= 5 && contador < 10) {
+                PORTB |= LED;   // Liga LED constante
+                piscar_led = 0;
+                TCCR1B &= ~((1 << CS12) | (1 << CS11) | (1 << CS10)); // Desliga timer
+            } 
+            else if(contador >= 10) {
+                piscar_led = 1;
+                // Configura timer para 2Hz (prescaler 1024)
+                TCCR1B |= (1 << CS12) | (1 << CS10);
+            }
+        }
+    } else {
+        primeira_leitura = 0;   // Marca que a primeira leitura foi feita
+    }
+    
+    leitura_anterior = leitura_atual; // Atualiza leitura anterior
+    
+   
+    sprintf(msg_tx, "Leitura: %u, Contador: %u\n", leitura_atual, contador);
+    UART_Transmit(msg_tx);
+}
+
+
+ISR(TIMER1_COMPA_vect) {
+    if(piscar_led) {
+        PORTB ^= LED;          // Alterna estado do LED
+    }
+}
+
+
+void UART_Init(unsigned int ubrr) {
+    // Configuração original da UART
+}
+
+void UART_Transmit(char *dados) {
+    // Implementação original de transmissão
+}
